@@ -44,10 +44,10 @@ class ReplayBuffer:
         # if rew < self.min_reward:
         #     self.min_reward = rew
 
-        # self.total_num += 1
-        # self.obs_mean = self.obs_mean / self.total_num * (self.total_num - 1) + np.array(obs) / self.total_num
-        # self.obs_square_mean = self.obs_square_mean / self.total_num * (self.total_num - 1) + np.array(obs)**2 / self.total_num
-        # self.obs_std = np.sqrt(self.obs_square_mean - self.obs_mean ** 2 + 1e-8)
+        self.total_num += 1
+        self.obs_mean = self.obs_mean / self.total_num * (self.total_num - 1) + np.array(obs) / self.total_num
+        self.obs_square_mean = self.obs_square_mean / self.total_num * (self.total_num - 1) + np.array(obs)**2 / self.total_num
+        self.obs_std = np.sqrt(self.obs_square_mean - self.obs_mean ** 2 + 1e-8)
 
     def sample_batch(self, batch_size=32):
         idxs = np.random.randint(0, self.size, size=batch_size)

@@ -128,7 +128,7 @@ def main(args):
 
         # Store experience to replay buffer
         replay_buffer.store(o, a, reward_shaping(env) * args.reward_scale, o2, d)
-        # gac.update_obs_param()
+        gac.update_obs_param()
 
         o = o2
         if d or (ep_len == args.max_ep_len):
@@ -146,7 +146,7 @@ def main(args):
             test_ret, test_len = test_agent()
             print("Step {:>10}: test_ret = {:<20}, test_len = {:<20}".format(t, test_ret, test_len))
             print("-----------------------------------------------------------")
-            yield t, test_ret, test_len
+            yield t, test_ret, test_len, actor_critic
 
 Args = namedtuple('Args',
                ('alg_name',
@@ -220,6 +220,7 @@ if __name__ == "__main__":
     logdir = "./data/gac/{}/{}-seed{}-{}".format(alg_args.env_name, alg_args.env_name,alg_args.seed, time())
     config_name = 'config.json'
     file_name = 'progress.csv'
+    model_name = 'model.pt'
     if not os.path.exists(logdir):
         os.makedirs(logdir)
 
@@ -234,8 +235,11 @@ if __name__ == "__main__":
     writer = csv.writer(csvfile, delimiter='\t')
     writer.writerow(['TotalEnvInteracts', 'AverageTestEpRet', 'AverageTestEpLen'])
 
-    for t, reward, len in main(alg_args):
+    full_model_name = os.path.join(logdir, model_name)
+
+    for t, reward, len, model in main(alg_args):
         writer.writerow([t, reward, len])
         csvfile.flush()
+        torch.save(model, full_model_name)
     
     csvfile.close()
