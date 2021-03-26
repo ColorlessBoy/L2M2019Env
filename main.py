@@ -78,7 +78,7 @@ def main(args):
         ret_r = reward - (vel_penalty * 3 + muscle_penalty * 1)
 
         if vel_penalty < 0.3:
-            ret_r += 10
+            ret_r += 20
 
         return ret_r
 
@@ -128,7 +128,6 @@ def main(args):
 
         # Store experience to replay buffer
         replay_buffer.store(o, a, reward_shaping(env) * args.reward_scale, o2, d)
-        gac.update_obs_param()
 
         o = o2
         if d or (ep_len == args.max_ep_len):
@@ -136,6 +135,7 @@ def main(args):
             o = np.array(o)
 
         if t >= args.update_after and t % args.steps_per_update==0:
+            gac.update_obs_param()
             for _ in range(args.steps_per_update):
                 loss_a, loss_c, alpha = gac.update(args.batch_size)
             gac.update_beta()
@@ -192,6 +192,8 @@ if __name__ == "__main__":
                         help='alpha_max (default: 1.5)')
     parser.add_argument('--difficulty', type=int, default=1, metavar='N',
                         help='difficulty for L2M2019Env(default: 1)')
+    parser.add_argument('--max_ep_len', type=int, default=1000, metavar='N',
+                        help='max_ep_len(default: 1000)')
 
     
     args = parser.parse_args()
@@ -201,10 +203,10 @@ if __name__ == "__main__":
                 args.device,        # device
                 args.seed,          # seed
                 [800, 400, 200],    # hidden_sizes
-                int(6e6),           # replay buffer size
+                int(1e6),           # replay buffer size
                 10,                 # epoch per test
                 2500,               # max_ep_len
-                1000,               # total epochs
+                args.max_ep_len,    # total epochs
                 4000,               # steps per epoch
                 10000,              # start steps
                 args.reward_scale,  # reward scale 
