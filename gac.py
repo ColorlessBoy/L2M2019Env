@@ -42,21 +42,6 @@ class GAC(object):
         for p in self.target_actor_critic.parameters():
             p.requires_grad = False
     
-    def update_obs_param(self):
-        # for state normalization
-        self.actor_critic.obs_mean = torch.FloatTensor(self.replay_buffer.obs_mean).to(self.device)
-        self.actor_critic.obs_std  = torch.FloatTensor(self.replay_buffer.obs_std).to(self.device)
-        self.target_actor_critic.obs_mean = self.actor_critic.obs_mean
-        self.target_actor_critic.obs_std  = self.actor_critic.obs_std
-
-    # def update_obs_param2(self):
-    #     # for state normalization
-    #     self.replay_buffer.obs_mean = self.actor_critic.obs_mean.cpu().numpy()
-    #     self.replay_buffer.obs_std = self.actor_critic.obs_std.cpu().numpy()
-    #     self.replay_buffer.obs_square_mean = np.maximum(self.replay_buffer.obs_std**2 + self.replay_buffer.obs_mean**2, 1e-8)
-    #     self.target_actor_critic.obs_mean = self.actor_critic.obs_mean
-    #     self.target_actor_critic.obs_std  = self.actor_critic.obs_std
-
     def update(self, batch_size):
         if isinstance(self.replay_buffer, list):
             length = len(self.replay_buffer)

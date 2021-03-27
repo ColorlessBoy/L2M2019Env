@@ -145,7 +145,6 @@ def main(args):
             o = get_observation(env)
 
         if t >= args.update_after and t % args.steps_per_update==0:
-            gac.update_obs_param()
             for _ in range(args.steps_per_update):
                 loss_a, loss_c, alpha = gac.update(args.batch_size)
             gac.update_beta()
