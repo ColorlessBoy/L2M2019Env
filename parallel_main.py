@@ -48,30 +48,61 @@ class Observer:
         if args.env_name == 'L2M2019Env':
             self.env = L2M2019Env(visualize=False, difficulty=args.difficulty, seed=args.seed+self.id)
             self.test_env = L2M2019Env(visualize=False, difficulty=args.difficulty, seed=args.seed+self.id+999)
+            self.obs_mean = np.array(args.obs_mean)
+            self.obs_std  = np.array(args.obs_std)
         else:
             self.env = gym.make(args.env_name)
             self.test_env = gym.make(args.env_name)
             self.env.seed(args.seed+self.id)
             self.test_env.seed(args.seed+self.id+999)
         
-        if args.env_name == 'L2M2019Env':
-            self.obs = np.array(self.env.reset(obs_as_dict=False))
-        else:
-            self.obs = self.env.reset()
-
         self.act_limit = self.env.action_space.high[0]
-        self.done = False
+        self.done = True
         self.len = 0
 
         self.args = args
 
-        print("observer")
+    def get_observation(self, env):
+        obs = np.array(env.get_observation()[242:])
+
+        obs = (obs - self.obs_mean) / self.obs_std
+
+        state_desc = env.get_state_desc()
+        p_body = [state_desc['body_pos']['pelvis'][0], -state_desc['body_pos']['pelvis'][2]]
+        v_body = [state_desc['body_vel']['pelvis'][0], -state_desc['body_vel']['pelvis'][2]]
+        v_tgt = env.vtgt.get_vtgt(p_body).T
+
+        return np.append(obs, v_tgt)
+    
+    def get_reward(self, env):
+        reward = 20.0
+
+        # Reward for not falling down
+        state_desc = env.get_state_desc()
+        p_body = [state_desc['body_pos']['pelvis'][0], -state_desc['body_pos']['pelvis'][2]]
+        v_body = [state_desc['body_vel']['pelvis'][0], -state_desc['body_vel']['pelvis'][2]]
+        v_tgt = env.vtgt.get_vtgt(p_body).T
+
+        vel_penalty = np.linalg.norm(v_body - v_tgt)
+
+        muscle_penalty = 0
+        for muscle in sorted(state_desc['muscles'].keys()):
+            muscle_penalty += np.square(
+                state_desc['muscles'][muscle]['activation'])
+
+        ret_r = reward - (vel_penalty * 3 + muscle_penalty * 1)
+
+        if vel_penalty < 0.3:
+            ret_r += 20
+
+        return ret_r
 
     def run_episode(self, agent_rref, n_steps, random):
         for step in range(n_steps):
             if self.done:
                 if self.args.env_name == 'L2M2019Env':
-                    self.obs = np.array(self.env.reset(obs_as_dict=False))
+                    self.env.reset()
+                    self.obs = self.get_observation(self.env)
                 else:
                     self.obs = self.env.reset()
                 self.len, self.done = 0, False
@@ -87,8 +118,9 @@ class Observer:
             # apply the action to the environment, and get the reward
             # [-1, 1] => [0, 1]
             if self.args.env_name == 'L2M2019Env':
-                o2, r, self.done, _ = self.env.step(np.abs(a), obs_as_dict=False)
-                o2 = np.array(o2)
+                _, _, self.done, _ = self.env.step(np.abs(a))
+                r  = self.get_reward(self.env)
+                o2 = self.get_observation(self.env)
             else:
                 o2, r, self.done, _ = self.env.step(a * self.act_limit)
 
@@ -104,7 +136,8 @@ class Observer:
     
     def test_episode(self, agent_rref):
         if self.args.env_name == 'L2M2019Env':
-            o = np.array(self.test_env.reset(obs_as_dict=False))
+            self.test_env.reset()
+            o = self.get_observation(self.test_env)
         else:
             o = self.test_env.reset()
 
@@ -112,8 +145,8 @@ class Observer:
         while not d and ep_len < self.args.max_ep_len:
             a = _remote_method(Agent.select_action, agent_rref, o, True)
             if self.args.env_name == 'L2M2019Env':
-                o, r, d, _ = self.test_env.step(np.abs(a), abs_as_dict=False)
-                o = np.array(o)
+                _, r, d, _ = self.test_env.step(np.abs(a))
+                o = self.get_observation(self.test_env)
             else:
                 o, r, d, _ = self.test_env.step(a)
             ep_ret += r
@@ -125,10 +158,11 @@ class Agent:
     def __init__(self, world_size, args):
         if args.env_name == 'L2M2019Env':
             env = L2M2019Env(visualize=False, difficulty=args.difficulty)
+            obs_dim = 99
         else:
             env = gym.make(args.env_name)
+            obs_dim  = env.observation_space.shape[0]
 
-        obs_dim  = env.observation_space.shape[0]
         act_dim  = env.action_space.shape[0]
 
         self.device = torch.device(args.device)
@@ -138,18 +172,6 @@ class Agent:
 
         self.actor_critic = MLPActorCritic(obs_dim, act_dim, hidden_sizes=args.hidden_sizes).to(self.device)
         self.replay_buffer = [ReplayBuffer(obs_dim, act_dim, args.buffer_size) for _ in range(1, world_size)]
-
-        if args.env_name == 'L2M2019Env':
-            with open('obs.npy', 'rb') as f:
-                obs_mean = np.load(f)
-                obs_std  = np.load(f)
-            
-            for rb in range(self.replay_buffer):
-                rb.obs_mean = obs_mean
-                rb.obs_std  = obs_std
-
-            self.actor_critic.obs_mean = torch.from_numpy(obs_mean)
-            self.actor_critic.obs_std  = torch.from_numpy(obs_std)
 
         self.gac = GAC(self.actor_critic, self.replay_buffer, device=self.device, gamma=args.gamma,
               alpha_start=args.alpha_start, alpha_min=args.alpha_min, alpha_max=args.alpha_max)
@@ -225,7 +247,7 @@ def run_worker(rank, world_size, args):
         # rank0 is the agent
         rpc.init_rpc(AGENT_NAME, rank=rank, world_size=world_size)
 
-        logdir = "./data/gac/{}/{}-seed{}-{}".format(args.env_name, args.env_name, args.seed, time())
+        logdir = "./data/gac-parallel/{}/{}-seed{}-{}".format(args.env_name, args.env_name, args.seed, time())
         config_name = 'config.json'
         file_name = 'progress.csv'
         model_name = 'model.pt'
@@ -247,7 +269,10 @@ def run_worker(rank, world_size, args):
 
         agent = Agent(world_size, args)
 
+        print("Replay buffer warms up.")
         agent.run_episode(args.start_steps, True)
+        print("End.")
+        print("=================================================================")
 
         for t1 in range(args.total_epoch):
             for t2 in range(int(args.steps_per_epoch / args.steps_per_update)):
@@ -289,7 +314,9 @@ Args = namedtuple('Args',
                 'alpha_min',
                 'alpha_max',
                 'difficulty',
-                'gamma'))
+                'gamma',
+                'obs_mean',
+                'obs_std'))
 
 if __name__ == '__main__':
 
@@ -323,6 +350,9 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
 
+    data = np.load('./official_obs_scaler.npz')
+    obs_mean, obs_std = data['mean'], data['std']
+
     alg_args = Args("gac",          # alg_name
                 args.env,           # env_name
                 args.device,        # device
@@ -342,7 +372,9 @@ if __name__ == '__main__':
                 args.alpha_min,
                 args.alpha_max,
                 args.difficulty,
-                args.gamma)
+                args.gamma,
+                obs_mean.tolist(),
+                obs_std.tolist())
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)

@@ -23,14 +23,6 @@ class ReplayBuffer:
         self.rew_buf  = np.zeros(size, dtype=np.float32)
         self.done_buf = np.zeros(size, dtype=np.float32)
         self.ptr, self.size, self.max_size = 0, 0, size
-        # For state normalization.
-        self.total_num = 0
-        self.obs_limit = 5.0
-        self.obs_mean = np.zeros(obs_dim, dtype=np.float32)
-        self.obs_square_mean = np.zeros(obs_dim, dtype=np.float32)
-        self.obs_std = np.ones(obs_dim, dtype=np.float32)
-
-        # self.min_reward = 0.0
 
     def store(self, obs, act, rew, next_obs, done):
         self.obs_buf[self.ptr] = obs
@@ -41,25 +33,14 @@ class ReplayBuffer:
         self.ptr = (self.ptr+1) % self.max_size
         self.size = min(self.size+1, self.max_size)
 
-        # if rew < self.min_reward:
-        #     self.min_reward = rew
-
-        # self.total_num += 1
-        # self.obs_mean = self.obs_mean / self.total_num * (self.total_num - 1) + np.array(obs) / self.total_num
-        # self.obs_square_mean = self.obs_square_mean / self.total_num * (self.total_num - 1) + np.array(obs)**2 / self.total_num
-        # self.obs_std = np.sqrt(self.obs_square_mean - self.obs_mean ** 2 + 1e-8)
-
     def sample_batch(self, batch_size=32):
         idxs = np.random.randint(0, self.size, size=batch_size)
-        batch = dict(obs=self.obs_encoder(self.obs_buf[idxs]),
-                     obs2=self.obs_encoder(self.obs2_buf[idxs]),
+        batch = dict(obs=self.obs_buf[idxs],
+                     obs2=self.obs2_buf[idxs],
                      act=self.act_buf[idxs],
                      rew=self.rew_buf[idxs],
                      done=self.done_buf[idxs])
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in batch.items()}
-    
-    def obs_encoder(self, o):
-        return ((np.array(o) - self.obs_mean)/(self.obs_std + 1e-8)).clip(-self.obs_limit, self.obs_limit)
 
 # ==============================================================================
 # Model For Actor Critic
@@ -119,11 +100,7 @@ class MLPActorCritic(nn.Module):
         self.critic1 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
         self.critic2 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
 
-        self.obs_mean = torch.FloatTensor([0.0])
-        self.obs_std = torch.FloatTensor([1.0])
-
     def act(self, obs, deterministic=False, noise='gaussian', obs_limit=5.0):
-        obs = ((obs - self.obs_mean.to(obs.device))/(self.obs_std.to(obs.device) + 1e-8)).clamp(-obs_limit, obs_limit)
         with torch.no_grad():
             if deterministic:
                 a = self.actor(obs, std=0.5, noise=noise)

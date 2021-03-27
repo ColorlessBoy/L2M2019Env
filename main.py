@@ -22,6 +22,9 @@ def main(args):
         test_env = gym.make(args.env_name)
     device = torch.device(args.device)
 
+    data = np.load('./official_obs_scaler.npz')
+    obs_mean, obs_std = data['mean'], data['std']
+
     # 1.Set some necessary seed.
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
@@ -30,25 +33,21 @@ def main(args):
     test_env.seed(args.seed + 999)
 
     # 2.Create actor, critic, EnvSampler() and PPO.
-    obs_dim  = env.observation_space.shape[0]
+    if 'L2M2019Env' in args.env_name:
+        obs_dim = 99
+    else:
+        obs_dim  = env.observation_space.shape[0]
     act_dim  = env.action_space.shape[0]
+
     act_high = env.action_space.high
     act_low  = env.action_space.low
-    obs_high = env.observation_space.high
-    obs_low  = env.observation_space.low
 
     actor_critic = MLPActorCritic(obs_dim, act_dim, hidden_sizes=args.hidden_sizes).to(device)
 
     replay_buffer = ReplayBuffer(obs_dim, act_dim, args.buffer_size)
-    replay_buffer.obs_mean = (obs_high + obs_low) / 2
-    replay_buffer.obs_std  = (obs_high - obs_low) / 2
-
-    actor_critic.obs_mean = torch.FloatTensor(replay_buffer.obs_mean).to(device)
-    actor_critic.obs_std  = torch.FloatTensor(replay_buffer.obs_std).to(device)
 
     gac = GAC(actor_critic, replay_buffer, device=device, gamma=args.gamma,
               alpha_start=args.alpha_start, alpha_min=args.alpha_min, alpha_max=args.alpha_max)
-    
 
     def act_encoder(y):
         # y = [min, max] ==> x = [-1, 1]
@@ -58,8 +57,19 @@ def main(args):
         # x = [-1, 1] ==> y = [min, max]
         return (x + 1.0) / 2.0 * (act_high - act_low) - act_low
 
-    def reward_shaping(env):
+    def get_observation(env):
+        obs = np.array(env.get_observation()[242:])
 
+        obs = (obs - obs_mean) / obs_std
+
+        state_desc = env.get_state_desc()
+        p_body = [state_desc['body_pos']['pelvis'][0], -state_desc['body_pos']['pelvis'][2]]
+        v_body = [state_desc['body_vel']['pelvis'][0], -state_desc['body_vel']['pelvis'][2]]
+        v_tgt = env.vtgt.get_vtgt(p_body).T
+
+        return np.append(obs, v_tgt)
+
+    def get_reward(env):
         reward = 20.0
 
         # Reward for not falling down
@@ -75,7 +85,7 @@ def main(args):
             muscle_penalty += np.square(
                 state_desc['muscles'][muscle]['activation'])
 
-        ret_r = reward - (vel_penalty * 3 + muscle_penalty * 0.1)
+        ret_r = reward - (vel_penalty * 3 + muscle_penalty * 1)
 
         if vel_penalty < 0.3:
             ret_r += 20
@@ -91,14 +101,14 @@ def main(args):
     def test_agent():
         test_ret, test_len = 0, 0
         for j in range(args.epoch_per_test):
-            o, d, ep_ret, ep_len = test_env.reset(obs_as_dict=False), False, 0, 0
-            o = np.array(o)
+            _, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
+            o = get_observation(test_env)
             while not(d or (ep_len == args.max_ep_len)):
                 # Take deterministic actions at test time 
                 a = get_action(o, True)
 
-                o, r, d, _ = test_env.step(act_decoder(a), obs_as_dict=False)
-                o = np.array(o)
+                _, r, d, _ = test_env.step(act_decoder(a))
+                o = get_observation(test_env)
                 ep_ret += r
                 ep_len += 1
 
@@ -107,16 +117,16 @@ def main(args):
         return test_ret / args.epoch_per_test, test_len / args.epoch_per_test
 
     total_step = args.total_epoch * args.steps_per_epoch
-    o, d, ep_ret, ep_len = env.reset(obs_as_dict=False), False, 0, 0
-    o = np.array(o)
+    _, d, ep_ret, ep_len = env.reset(), False, 0, 0
+    o = get_observation(env)
     for t in range(1, total_step+1):
         if t <= args.start_steps:
             a = act_encoder(env.action_space.sample())
         else:
             a = get_action(o, deterministic=False)
         
-        o2, r, d, _ = env.step(act_decoder(a), obs_as_dict=False)
-        o2 = np.array(o2)
+        _, r, d, _ = env.step(act_decoder(a))
+        o2 = get_observation(env)
         ep_ret += r
         ep_len += 1
 
@@ -127,12 +137,12 @@ def main(args):
         d = False if ep_len==args.max_ep_len else d
 
         # Store experience to replay buffer
-        replay_buffer.store(o, a, reward_shaping(env) * args.reward_scale, o2, d)
+        replay_buffer.store(o, a, get_reward(env) * args.reward_scale, o2, d)
 
         o = o2
         if d or (ep_len == args.max_ep_len):
-            o, ep_ret, ep_len = env.reset(obs_as_dict=False), 0, 0
-            o = np.array(o)
+            _, ep_ret, ep_len = env.reset(obs_as_dict=False), 0, 0
+            o = get_observation(env)
 
         if t >= args.update_after and t % args.steps_per_update==0:
             gac.update_obs_param()
@@ -175,8 +185,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Run experiment with optional args')
-    parser.add_argument('--env', default='HalfCheetah-v3', metavar='G',
-                        help='name of environment name (default: HalfCheetah-v3)')
+    parser.add_argument('--env', default='L2M2019Env', metavar='G',
+                        help='name of environment name (default: L2M2019Env)')
     parser.add_argument('--device', default='cuda:0', metavar='G',
                         help='device (default cuda:0)')
     parser.add_argument('--seed', type=int, default=0, metavar='N',
@@ -191,10 +201,10 @@ if __name__ == "__main__":
                         help='alpha_min (default: 1.0)')
     parser.add_argument('--alpha_max', type=float, default=1.5, metavar='N',
                         help='alpha_max (default: 1.5)')
-    parser.add_argument('--difficulty', type=int, default=1, metavar='N',
-                        help='difficulty for L2M2019Env(default: 1)')
-    parser.add_argument('--max_ep_len', type=int, default=1000, metavar='N',
-                        help='max_ep_len(default: 1000)')
+    parser.add_argument('--difficulty', type=int, default=3, metavar='N',
+                        help='difficulty for L2M2019Env(default: 3)')
+    parser.add_argument('--max_ep_len', type=int, default=2500, metavar='N',
+                        help='max_ep_len(default: 2500)')
     parser.add_argument('--gamma', type=float, default=0.99, metavar='N',
                         help='gamma (default: 0.99)')
 
@@ -208,8 +218,8 @@ if __name__ == "__main__":
                 [800, 400, 200],    # hidden_sizes
                 int(1e6),           # replay buffer size
                 10,                 # epoch per test
-                2500,               # max_ep_len
-                args.max_ep_len,    # total epochs
+                args.max_ep_len,    # max_ep_len
+                args.epochs,        # total epochs
                 4000,               # steps per epoch
                 10000,              # start steps
                 args.reward_scale,  # reward scale 
