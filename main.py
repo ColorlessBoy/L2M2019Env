@@ -75,7 +75,7 @@ def main(args):
             muscle_penalty += np.square(
                 state_desc['muscles'][muscle]['activation'])
 
-        ret_r = reward - (vel_penalty * 3 + muscle_penalty * 1)
+        ret_r = reward - (vel_penalty * 3 + muscle_penalty * 0.1)
 
         if vel_penalty < 0.3:
             ret_r += 20
