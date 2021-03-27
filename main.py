@@ -46,7 +46,7 @@ def main(args):
     actor_critic.obs_mean = torch.FloatTensor(replay_buffer.obs_mean).to(device)
     actor_critic.obs_std  = torch.FloatTensor(replay_buffer.obs_std).to(device)
 
-    gac = GAC(actor_critic, replay_buffer, device=device,
+    gac = GAC(actor_critic, replay_buffer, device=device, gamma=args.gamma,
               alpha_start=args.alpha_start, alpha_min=args.alpha_min, alpha_max=args.alpha_max)
     
 
@@ -168,7 +168,8 @@ Args = namedtuple('Args',
                 'alpha_min',
                 'alpha_max',
                 'difficulty',
-                'frame_skip'))
+                'frame_skip',
+                'gamma'))
 
 if __name__ == "__main__":
     import argparse
@@ -194,6 +195,8 @@ if __name__ == "__main__":
                         help='difficulty for L2M2019Env(default: 1)')
     parser.add_argument('--max_ep_len', type=int, default=1000, metavar='N',
                         help='max_ep_len(default: 1000)')
+    parser.add_argument('--gamma', type=float, default=0.99, metavar='N',
+                        help='gamma (default: 0.99)')
 
     
     args = parser.parse_args()
@@ -217,7 +220,8 @@ if __name__ == "__main__":
                 args.alpha_min,
                 args.alpha_max,
                 args.difficulty,
-                4)                  # frame_skip
+                4,                  # frame_skip
+                args.gamma)
 
     logdir = "./data/gac/{}/{}-seed{}-{}".format(alg_args.env_name, alg_args.env_name,alg_args.seed, time())
     config_name = 'config.json'
