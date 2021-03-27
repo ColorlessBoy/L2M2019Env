@@ -58,7 +58,12 @@ class GAC(object):
     #     self.target_actor_critic.obs_std  = self.actor_critic.obs_std
 
     def update(self, batch_size):
-        data = self.replay_buffer.sample_batch(batch_size) # normalized by replay buffer
+        if isinstance(self.replay_buffer, list):
+            length = len(self.replay_buffer)
+            idx = np.random.randint(length)
+            data = self.replay_buffer[idx].sample_batch(batch_size) # normalized by replay buffer
+        else:
+            data = self.replay_buffer.sample_batch(batch_size) # normalized by replay buffer
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
 
         o  = torch.FloatTensor(o).to(self.device)
