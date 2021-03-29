@@ -268,7 +268,10 @@ if __name__ == "__main__":
                 4,                  # frame_skip
                 args.gamma)
 
-    logdir = "./data/gac/{}/{}-seed{}-{}".format(alg_args.env_name, alg_args.env_name,alg_args.seed, time())
+    if alg_args.env_name == 'L2M2019Env':
+        logdir = "./data/gac/{}-d{}/{}-d{}-seed{}-{}".format(alg_args.env_name, args.difficulty, alg_args.env_name, args.difficulty, alg_args.seed, time())
+    else:
+        logdir = "./data/gac/{}/{}-seed{}-{}".format(alg_args.env_name, alg_args.env_name,alg_args.seed, time())
     config_name = 'config.json'
     file_name = 'progress.csv'
     model_name = 'model.pt'
