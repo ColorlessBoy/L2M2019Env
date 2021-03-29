@@ -51,10 +51,14 @@ def main(args):
 
     def act_encoder(y):
         # y = [min, max] ==> x = [-1, 1]
+        # if args.env_name == 'L2M2019Env':
+        #     return y
         return (y - act_low) / (act_high - act_low) * 2.0 - 1.0
     
     def act_decoder(x):
         # x = [-1, 1] ==> y = [min, max]
+        # if args.env_name == 'L2M2019Env':
+        #     return np.abs(x)
         return (x + 1.0) / 2.0 * (act_high - act_low) - act_low
 
     def get_observation(env):
@@ -91,6 +95,34 @@ def main(args):
             ret_r += 20
 
         return ret_r
+    
+    def generate_success(o, o2):
+        reward = 40.0
+
+        # Reward for not falling down
+        state_desc = env.get_state_desc()
+        v_body = [state_desc['body_vel']['pelvis'][0], -state_desc['body_vel']['pelvis'][2]]
+
+        theta = np.random.random() * 2 * np.pi - np.pi
+        radius = np.random.random() * 0.3
+        x = np.cos(theta) * radius
+        y = np.sin(theta) * radius
+
+        v_tgt = [v_body[0] + x, v_body[1] + y]
+
+        vel_penalty = radius
+
+        muscle_penalty = 0
+        for muscle in sorted(state_desc['muscles'].keys()):
+            muscle_penalty += np.square(
+                state_desc['muscles'][muscle]['activation'])
+
+        ret_r = reward - (vel_penalty * 3 + muscle_penalty * 1)
+
+        new_o = np.append(o[:-2], v_tgt)
+        new_o2 = np.append(o2[:-2], v_tgt)
+
+        return new_o, ret_r, new_o2
 
     # 3.Start training.
     def get_action(o, deterministic=False):
@@ -135,6 +167,10 @@ def main(args):
         # that isn't based on the agent's state)
 
         d = False if ep_len==args.max_ep_len else d
+
+        # if not d:
+        #     new_o, new_r, new_o2 = generate_success(o, o2)
+        #     replay_buffer.store(new_o, a, new_r * args.reward_scale, new_o2, d)
 
         # Store experience to replay buffer
         replay_buffer.store(o, a, get_reward(env) * args.reward_scale, o2, d)
@@ -222,7 +258,7 @@ if __name__ == "__main__":
                 4000,               # steps per epoch
                 10000,              # start steps
                 args.reward_scale,  # reward scale 
-                1000,               # update after
+                4000,               # update after
                 50,                 # steps_per_update
                 100,                # batch size
                 args.alpha_start,
