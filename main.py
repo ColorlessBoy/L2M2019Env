@@ -74,7 +74,7 @@ def main(args):
         return np.append(obs, v_tgt)
 
     def get_reward(env):
-        reward = 20.0
+        reward = 10.0
 
         # Reward for not falling down
         state_desc = env.get_state_desc()
@@ -92,38 +92,10 @@ def main(args):
         ret_r = reward - (vel_penalty * 3 + muscle_penalty * 1)
 
         if vel_penalty < 0.3:
-            ret_r += 20
+            ret_r += 10
 
         return ret_r
     
-    def generate_success(o, o2):
-        reward = 40.0
-
-        # Reward for not falling down
-        state_desc = env.get_state_desc()
-        v_body = [state_desc['body_vel']['pelvis'][0], -state_desc['body_vel']['pelvis'][2]]
-
-        theta = np.random.random() * 2 * np.pi - np.pi
-        radius = np.random.random() * 0.3
-        x = np.cos(theta) * radius
-        y = np.sin(theta) * radius
-
-        v_tgt = [v_body[0] + x, v_body[1] + y]
-
-        vel_penalty = radius
-
-        muscle_penalty = 0
-        for muscle in sorted(state_desc['muscles'].keys()):
-            muscle_penalty += np.square(
-                state_desc['muscles'][muscle]['activation'])
-
-        ret_r = reward - (vel_penalty * 3 + muscle_penalty * 1)
-
-        new_o = np.append(o[:-2], v_tgt)
-        new_o2 = np.append(o2[:-2], v_tgt)
-
-        return new_o, ret_r, new_o2
-
     # 3.Start training.
     def get_action(o, deterministic=False):
         o = torch.FloatTensor(o.reshape(1, -1)).to(device)
@@ -138,18 +110,22 @@ def main(args):
             while not(d or (ep_len == args.max_ep_len)):
                 # Take deterministic actions at test time 
                 a = get_action(o, True)
+                a = act_decoder(a)
 
-                _, r, d, _ = test_env.step(act_decoder(a))
+                for _ in range(args.frame_skip):
+                    _, r, d, _ = test_env.step(a)
+                    ep_ret += r
+                    ep_len += 1
+                    if d: break
+
                 o = get_observation(test_env)
-                ep_ret += r
-                ep_len += 1
 
             test_ret += ep_ret
             test_len += ep_len
         return test_ret / args.epoch_per_test, test_len / args.epoch_per_test
 
     total_step = args.total_epoch * args.steps_per_epoch
-    _, d, ep_ret, ep_len = env.reset(), False, 0, 0
+    _, d, ep_len = env.reset(), False, 0
     o = get_observation(env)
     for t in range(1, total_step+1):
         if t <= args.start_steps:
@@ -157,10 +133,16 @@ def main(args):
         else:
             a = get_action(o, deterministic=False)
         
-        _, r, d, _ = env.step(act_decoder(a))
+        a = act_decoder(a)
+
+        r = 0.0
+        for _ in range(args.frame_skip):
+            _, _, d, _ = env.step(a)
+            r += get_reward(env)
+            ep_len += 1
+            if d: break
+
         o2 = get_observation(env)
-        ep_ret += r
-        ep_len += 1
 
         # Ignore the "done" signal if it comes from hitting the time
         # horizon (that is, when it's an artificial terminal signal
@@ -173,11 +155,11 @@ def main(args):
         #     replay_buffer.store(new_o, a, new_r * args.reward_scale, new_o2, d)
 
         # Store experience to replay buffer
-        replay_buffer.store(o, a, get_reward(env) * args.reward_scale, o2, d)
+        replay_buffer.store(o, a, r * args.reward_scale, o2, d)
 
         o = o2
         if d or (ep_len == args.max_ep_len):
-            _, ep_ret, ep_len = env.reset(obs_as_dict=False), 0, 0
+            _, ep_len = env.reset(obs_as_dict=False), 0
             o = get_observation(env)
 
         if t >= args.update_after and t % args.steps_per_update==0:
@@ -242,7 +224,8 @@ if __name__ == "__main__":
                         help='max_ep_len(default: 2500)')
     parser.add_argument('--gamma', type=float, default=0.99, metavar='N',
                         help='gamma (default: 0.99)')
-
+    parser.add_argument('--net', type=int, nargs='+', default=[400, 300], 
+                        help='net structure (default: [400, 300])')
     
     args = parser.parse_args()
 
@@ -250,15 +233,15 @@ if __name__ == "__main__":
                 args.env,           # env_name
                 args.device,        # device
                 args.seed,          # seed
-                [800, 400, 200],    # hidden_sizes
+                args.net,           # hidden_sizes
                 int(1e6),           # replay buffer size
                 10,                 # epoch per test
                 args.max_ep_len,    # max_ep_len
                 args.epochs,        # total epochs
                 4000,               # steps per epoch
-                10000,              # start steps
+                1000,               # start steps
                 args.reward_scale,  # reward scale 
-                4000,               # update after
+                1000,               # update after
                 50,                 # steps_per_update
                 100,                # batch size
                 args.alpha_start,

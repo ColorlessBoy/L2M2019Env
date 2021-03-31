@@ -92,7 +92,7 @@ class MLPQFunction(nn.Module):
 class MLPActorCritic(nn.Module):
 
     def __init__(self, obs_dim, act_dim, hidden_sizes=(400,300),
-                 activation=nn.LeakyReLU(negative_slope=0.2)):
+                 activation=nn.SELU()):
         super().__init__()
 
         # build policy and value functions
